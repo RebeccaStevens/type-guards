@@ -1,7 +1,7 @@
 import * as fp from './fp'
-import { Basic, BasicString, Dict, Guard, GuardWithShape, Omit, Shape, StringToBasic, Unshape, FromGuard } from './types'
+import { Basic, BasicString, Dict, Guard, GuardWithShape, Optional, OptionalGuard, Omit, Shape, StringToBasic, Unshape, FromGuard } from './types'
 
-export { Guard, GuardWithShape, Dict, Shape, Omit, FromGuard }
+export { Guard, GuardWithShape, Optional, OptionalGuard, Dict, Shape, Omit, FromGuard }
 
 export const isOneOf = fp.or
 export { fp }
@@ -139,6 +139,24 @@ export function isArrayOf<T> (itemGuard: Guard<T>): Guard<T[]> {
   return ((input: any) => Array.isArray(input) && input.every(itemGuard)) as Guard<T[]>
 }
 
+const optionalSymbol = Symbol('optional')
+
+/**
+ * Create a validator that asserts that passed guard passes for the given value,
+ * or that that value is not set.
+ */
+export function optional<T> (guard: Guard<T>): OptionalGuard<T> {
+  const optionalGuard = (arg: unknown): arg is Optional<T> => {
+    return isUndefined(arg) || guard(arg)
+  }
+  (optionalGuard as any)[optionalSymbol] = true
+  return optionalGuard
+}
+
+function isOptional<T> (guard: Guard<T>): boolean {
+  return (guard as any)[optionalSymbol] === true
+}
+
 export function isOfExactShape<V extends Dict, T extends Shape<V> = Shape<V>> (shape: T): GuardWithShape<Unshape<T>> {
   return isOfShape<V,T>(shape, true)
 }
@@ -150,16 +168,22 @@ export function isOfExactShape<V extends Dict, T extends Shape<V> = Shape<V>> (s
 export function isOfShape<V extends Dict, T extends Shape<V> = Shape<V>> (shape: T, exact: boolean = false): GuardWithShape<Unshape<T>> {
   const fn: any = (input: any): input is T => {
     if (input === null || typeof input != 'object') return false
+    let missingKeyCount = 0;
     const isNothingMissing = Object.keys(shape).every((key) => {
       const keyGuard: any = (shape as any)[key]
       if (typeof keyGuard == 'function') {
-        return key in input && (keyGuard as any)(input[key])
+        if (key in input) return (keyGuard as any)(input[key])
+        if (isOptional(keyGuard)) {
+          missingKeyCount++
+          return (keyGuard as any)(input[key])
+        }
+        return false
       } else if (typeof keyGuard == 'object') {
         return isOfShape(keyGuard, exact)(input[key])
       }
     })
     if (!isNothingMissing) return false
-    return !exact || Object.keys(input).length == Object.keys(shape).length
+    return !exact || Object.keys(input).length + missingKeyCount == Object.keys(shape).length
   }
   fn.shape = shape
   fn.exact = exact
